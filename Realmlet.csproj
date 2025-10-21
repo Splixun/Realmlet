@@ -10,6 +10,7 @@
   <!-- Inclut les packages -->
   <ItemGroup>
     <PackageReference Include="Raylib-cs" Version="7.0.1" />
+    <PackageReference Include="SharpNoise" Version="0.12.1.1" />
   </ItemGroup>
   <!-- Inclut le dossier des assets -->
   <ItemGroup>
@@ -20,8 +21,6 @@
   </ItemGroup>
   <!-- Force la copie du launcher Realmlet.exe lors d'un publish -->
   <Target Name="CopyRealmletAfterPublish" AfterTargets="Publish">
-    <Copy SourceFiles="Realmlet.exe"
-        DestinationFiles="$(PublishDir)\Realmlet.exe"
-        OverwriteReadOnlyFiles="true" />
+    <Copy SourceFiles="Realmlet.exe" DestinationFiles="$(PublishDir)\Realmlet.exe" OverwriteReadOnlyFiles="true" />
   </Target>
 </Project>
