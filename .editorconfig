@@ -1,0 +1,25 @@
+# Indique que ce fichier est à la racine de la config
+root = true
+
+# Règles par défaut pour tous les fichiers
+[*]
+charset = utf-8
+indent_style = space
+indent_size = 2
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Exceptions pour certains langages
+[*.md]
+trim_trailing_whitespace = false  # utile pour ne pas casser les listes Markdown
+
+# Makefile exige des tabulations réelles
+[Makefile]
+indent_style = tab
+
+# IDE0130: "Use 'var' instead of explicit type" est désactivé pour les fichiers C#
+[*.cs]
+dotnet_diagnostic.IDE0130.severity = none
+indent_style = space
+indent_size = 4

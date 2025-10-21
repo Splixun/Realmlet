@@ -1,0 +1,4 @@
+# Git ignore pour les fichiers générés par les builds
+bin/
+obj/
+logs/

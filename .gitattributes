@@ -1,0 +1,4 @@
+# Empêche Git de traiter tous les fichiers comme du texte. Cela signifie que Git ne modifiera 
+# jamais les fins de ligne, quels que soient les fichiers. Tous les fichiers seront commités
+# et récupérés tel quels. Sous Windows, on aura donc toujours des fins de ligne CRLF et pas LF
+* -text
