@@ -1,14 +1,27 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
+  <!-- Paramètres du projet -->
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType> <!-- Exe = console, WinExe = GUI -->
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AssemblyName>runtime</AssemblyName>
   </PropertyGroup>
-
+  <!-- Inclut les packages -->
   <ItemGroup>
-    <PackageReference Include="Raylib-cs" Version="7.0.2" />
+    <PackageReference Include="Raylib-cs" Version="7.0.1" />
   </ItemGroup>
-
+  <!-- Inclut le dossier des assets -->
+  <ItemGroup>
+    <Content Include="assets/**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+  <!-- Force la copie du launcher Realmlet.exe lors d'un publish -->
+  <Target Name="CopyRealmletAfterPublish" AfterTargets="Publish">
+    <Copy SourceFiles="Realmlet.exe"
+        DestinationFiles="$(PublishDir)\Realmlet.exe"
+        OverwriteReadOnlyFiles="true" />
+  </Target>
 </Project>
