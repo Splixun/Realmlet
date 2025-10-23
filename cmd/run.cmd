@@ -4,7 +4,6 @@ cls
 
 rem Variables d'environnement
 set APP_NAME=Realmlet
-set APP_ENV=dev
 set DATA_DIR=%APPDATA%\Realmlet
 set DATADIR_KIND=appdata
 

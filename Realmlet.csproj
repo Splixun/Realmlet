@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <!-- Paramètres du projet -->
   <PropertyGroup>
-    <OutputType>WinExe</OutputType> <!-- Exe = console, WinExe = GUI -->
+    <OutputType>Exe</OutputType> <!-- Exe = console, WinExe = GUI -->
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
