@@ -2,13 +2,14 @@
 {
     public class Program
     {
+        public static void AppConfiguration(RayECS.App app)
+        {
+
+        }
+
         public static int Main()
         {
-            RayECS.App.New(app =>
-            {
-                app.Run();
-            });
-            return 0;
+            return RayECS.App.Run(AppConfiguration);
         }
     }
 }

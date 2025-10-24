@@ -1,77 +1,37 @@
 using System.Diagnostics;
-using System.Reflection;
-using System.Runtime.CompilerServices;
+
 using Raylib_cs;
 using static Raylib_cs.Raylib;
 
 namespace RayECS
 {
-    #region Stages
+    #region Core
 
-    [Flags]
-    public enum Stage
-    {
-        None = 0,
-        Conf = 1 << 0,
-        Boot = 1 << 1,
-        Core = 1 << 2,
-        Tick = 1 << 3,
-        Flow = 1 << 4,
-        Draw = 1 << 5,
-        Exit = 1 << 6,
-    }
+    public enum Stage { Conf, Boot, Core, Tick, Flow, Draw, Exit }
 
-    [AttributeUsage(AttributeTargets.Method)]
-    public sealed class StageAllowedAttribute(Stage allowed) : Attribute
-    {
-        public Stage Allowed { get; } = allowed;
-    }
-
-    public static class StageGuard
+    public static class Guard
     {
         [Conditional("DEBUG")]
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        public static void Check()
+        public static void StageAllowed(params Stage[] allowed)
         {
-            CheckImpl(new StackFrame(1).GetMethod() as MethodInfo);
-        }
-
-        [Conditional("DEBUG")]
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        public static void Check(MethodBase method)
-        {
-            CheckImpl(method as MethodInfo);
-        }
-
-        private static void CheckImpl(MethodInfo? mi)
-        {
-            if (mi is null) return;
-            // Attribut directement sur la méthode ou sur la méthode de base (override)
-            var attr = mi.GetCustomAttribute<StageAllowedAttribute>(inherit: false)
-                ?? mi.GetBaseDefinition()?.GetCustomAttribute<StageAllowedAttribute>(inherit: false);
-            // Sinon, sur une méthode d’interface implémentée
-            if (attr is null && mi.DeclaringType is Type t)
-            {
-                foreach (var itf in t.GetInterfaces())
-                {
-                    var map = t.GetInterfaceMap(itf);
-                    for (int i = 0; i < map.TargetMethods.Length; i++)
-                        if (map.TargetMethods[i] == mi)
-                        {
-                            var method = map.InterfaceMethods[i];
-                            attr = method.GetCustomAttribute<StageAllowedAttribute>(inherit: false);
-                            if (attr != null) break;
-                        }
-                    if (attr != null) break;
-                }
-            }
-            // Pas d'attribut = pas de restriction
-            if (attr is null) return;
-            // Vérification du droit d'accès
-            if ((attr.Allowed & App.Stage) == 0)
+            foreach (var stage in allowed)
+                if (App.Stage == stage) return;
             throw new InvalidOperationException(
-                $"Stage {App.Stage} not allowed. Expected: {attr.Allowed}"
+                $"Stage {App.Stage} not allowed. Expected: {string.Join(", ", allowed)}"
             );
+        }
+
+        [Conditional("DEBUG")]
+        public static void NamedMethod(Delegate d)
+        {
+            if (
+                d.Target != null // Capture
+                || (d.Method.DeclaringType?.Name.Contains("<>c") ?? false) // Lambda
+                || (d.Method.DeclaringType?.Name.Contains("DisplayClass") ?? false) // Closure
+            )
+                throw new InvalidOperationException(
+                    "Expected user-named method, but received lambda, closure or local function."
+                );
         }
     }
 
@@ -81,74 +41,72 @@ namespace RayECS
 
     public class States(App app)
     {
-        private readonly App app = app;
-        private readonly List<string> list = [];
-        private readonly Dictionary<string, Action> onEnter = [];
-        private readonly Dictionary<string, Action> onExit = [];
-        private string? current = null;
-        private string? pending = null;
+        private readonly App _app = app;
+        private readonly List<string> _list = [];
+        private readonly Dictionary<string, Action<App>> _onEnter = [];
+        private readonly Dictionary<string, Action<App>> _onExit = [];
+        private string? _current = null;
+        private string? _pending = null;
 
         public class Builder(States states, string name)
         {
-            private readonly States states = states;
-            private readonly string name = name;
+            private readonly States _states = states;
+            private readonly string _name = name;
 
-            public Builder OnEnter(Action action)
+            public Builder OnEnter(Action<App> fn)
             {
-                if (states.onEnter.ContainsKey(name))
-                    throw new ArgumentException($"State {name} already has an OnEnter action.");
-                states.onEnter[name] = action;
+                if (_states._onEnter.ContainsKey(_name))
+                    throw new ArgumentException($"State {_name} already has an OnEnter action.");
+                _states._onEnter[_name] = fn;
                 return this;
             }
 
-            public Builder OnExit(Action action)
+            public Builder OnExit(Action<App> fn)
             {
-                if (states.onExit.ContainsKey(name))
-                    throw new ArgumentException($"State {name} already has an OnExit action.");
-                states.onExit[name] = action;
+                if (_states._onExit.ContainsKey(_name))
+                    throw new ArgumentException($"State {_name} already has an OnExit action.");
+                _states._onExit[_name] = fn;
                 return this;
             }
         }
 
-        [StageAllowed(Stage.Conf)]
         public Builder Add(string name)
         {
-            StageGuard.Check();
-            if (list.Contains(name))
+            Guard.StageAllowed(Stage.Conf);
+            if (_list.Contains(name))
                 throw new ArgumentException($"State {name} already exists.");
-            list.Add(name);
+            _list.Add(name);
             return new Builder(this, name);
         }
 
-        [StageAllowed(Stage.Boot | Stage.Flow)]
         public void Set(string name)
         {
-            StageGuard.Check();
-            if (!list.Contains(name))
+            Guard.StageAllowed(Stage.Boot, Stage.Flow);
+            if (!_list.Contains(name))
                 throw new KeyNotFoundException($"State {name} not found.");
-            if (name == current)
+            if (name == _current)
                 throw new InvalidOperationException($"Already in state {name}.");
-            pending = name;
+            _pending = name;
         }
 
-        [StageAllowed(Stage.Core)]
         public void ApplyChange()
         {
-            StageGuard.Check();
-            if (pending is null) return;
-            if (current is not null) onExit[current](); // TODO : à try catcher !!!
-            onEnter[pending]();                         // TODO : à try catcher !!!
-            current = pending;
-            pending = null;
+            Guard.StageAllowed(Stage.Core);
+            if (_pending is null) return;
+            if (_current is not null && _onExit.TryGetValue(_current, out var fn))
+                fn(_app); // TODO : à try catcher !!!
+            if (_onEnter.TryGetValue(_pending, out fn))
+                fn(_app); // TODO : à try catcher !!!
+            _current = _pending;
+            _pending = null;
         }
 
-        [StageAllowed(Stage.Tick | Stage.Flow | Stage.Draw)]
         public bool In(string name)
         {
-            StageGuard.Check();
-            if (!list.Contains(name))
+            Guard.StageAllowed(Stage.Tick, Stage.Flow, Stage.Draw);
+            if (!_list.Contains(name))
                 throw new KeyNotFoundException($"State {name} not found.");
-            return name == current;
+            return name == _current;
         }
     }
 
@@ -162,24 +120,24 @@ namespace RayECS
 
     public sealed class Resources(App app)
     {
-        private readonly App app = app;
-        private readonly Dictionary<Type, (object res, Lifetime lifetime)> list = [];
+        private readonly App _app = app;
+        private readonly Dictionary<Type, (object res, Lifetime lifetime)> _list = [];
 
-        [StageAllowed(Stage.Boot | Stage.Tick | Stage.Flow)]
         public void Add<T>(T res, Lifetime lifetime) where T : class, IResource
         {
-            StageGuard.Check();
+            Guard.StageAllowed(Stage.Core, Stage.Tick, Stage.Flow);
             var t = typeof(T);
-            if (list.ContainsKey(t))
+            if (_list.ContainsKey(t))
                 throw new InvalidOperationException($"Resource {t.Name} already exists.");
-            list[t] = (res, lifetime);
+            _list[t] = (res, lifetime);
         }
 
-        [StageAllowed(Stage.Tick | Stage.Flow | Stage.Draw)]
+        // TODO : Methode pour tester l'existence d'une ressource !!!
+
         public bool TryGet<T>(out T res) where T : class, IResource
         {
-            StageGuard.Check();
-            if (list.TryGetValue(typeof(T), out var entry))
+            Guard.StageAllowed(Stage.Tick, Stage.Flow, Stage.Draw);
+            if (_list.TryGetValue(typeof(T), out var entry))
             {
                 res = (T)entry.res;
                 return true;
@@ -188,16 +146,53 @@ namespace RayECS
             return false;
         }
 
-        [StageAllowed(Stage.Tick | Stage.Flow)]
         public bool Remove<T>() where T : class, IResource
         {
-            StageGuard.Check();
+            Guard.StageAllowed(Stage.Tick, Stage.Flow);
             var t = typeof(T);
-            if (!list.TryGetValue(t, out var entry))
+            if (!_list.TryGetValue(t, out var entry))
                 throw new KeyNotFoundException($"Resource {t.Name} does not exist.");
             if (entry.lifetime == Lifetime.Permanent)
                 throw new InvalidOperationException($"Cannot remove required resource {t.Name}.");
-            return list.Remove(t);
+            return _list.Remove(t);
+        }
+    }
+
+    #endregion
+
+    #region Systems
+
+    public sealed class Systems(App app)
+    {
+        private readonly App _app = app;
+        private readonly List<Stage> _allowed = [
+            Stage.Boot, Stage.Tick, Stage.Flow, Stage.Draw, Stage.Exit
+        ];
+        private readonly Dictionary<Stage, Dictionary<string, Action<App>>> _list = [];
+
+        public void Add(Stage stage, Action<App> fn)
+        {
+            Guard.StageAllowed(Stage.Conf);
+            if (!_allowed.Contains(stage))
+                throw new ArgumentException(
+                    $"Stage {stage} doesn't accept systems. " +
+                    $"Allowed stages: {string.Join(", ", _allowed)}."
+                );
+            Guard.NamedMethod(fn);
+            var name = fn.Method.Name;
+            if (!_list.ContainsKey(stage))
+                _list[stage] = [];
+            if (_list[stage].ContainsKey(name))
+                throw new ArgumentException($"System {name} already exists.");
+            _list[stage][name] = fn;
+        }
+
+        public void Run(Stage stage)
+        {
+            Guard.StageAllowed(Stage.Core);
+            if (!_list.TryGetValue(stage, out var systems)) return;
+            foreach (var fn in systems.Values)
+                fn(_app); // TODO : à try catcher !!!
         }
     }
 
@@ -207,64 +202,46 @@ namespace RayECS
 
     public class Time : IResource
     {
-        private float delta = 0f;
-        private float fixedDelta = 0f;
-        private float alpha = 0f;
+        private float _tickDelta = 0f;
+        private float _flowDelta = 0f;
+        private float _alpha = 0f;
 
-        public float Delta
+        public float TickDelta
         {
-            [StageAllowed(Stage.Core)]
             set {
-                StageGuard.Check();
-                delta = value;
+                Guard.StageAllowed(Stage.Core);
+                _tickDelta = value;
             }
 
-            [StageAllowed(Stage.Core)]
             get {
-                StageGuard.Check();
-                return delta;
+                Guard.StageAllowed(Stage.Core, Stage.Tick);
+                return _tickDelta;
             }
         }
 
-        public float Fixed
+        public float FlowDelta
         {
-            [StageAllowed(Stage.Core)]
             set {
-                StageGuard.Check();
-                fixedDelta = value;
+                Guard.StageAllowed(Stage.Core);
+                _flowDelta = value;
             }
 
-            [StageAllowed(Stage.Core)]
             get {
-                StageGuard.Check();
-                return fixedDelta;
+                Guard.StageAllowed(Stage.Core, Stage.Flow);
+                return _flowDelta;
             }
         }
 
         public float Alpha
         {
-            [StageAllowed(Stage.Core)]
             set {
-                StageGuard.Check();
-                alpha = value;
+                Guard.StageAllowed(Stage.Core);
+                _alpha = value;
             }
 
-            [StageAllowed(Stage.Draw)]
             get {
-                StageGuard.Check();
-                return alpha;
-            }
-        }
-
-        public float DeltaTime
-        {
-            [StageAllowed(Stage.Tick | Stage.Flow)]
-            get {
-                StageGuard.Check();
-                if (App.Stage == Stage.Tick)
-                    return fixedDelta;
-                else
-                    return delta;
+                Guard.StageAllowed(Stage.Draw);
+                return _alpha;
             }
         }
     }
@@ -280,18 +257,17 @@ namespace RayECS
 
     public sealed class Plugins(App app)
     {
-        private readonly App app = app;
-        private readonly List<string> list = [];
+        private readonly App _app = app;
+        private readonly List<string> _list = [];
 
-        [StageAllowed(Stage.Conf)]
         public void Add<T>() where T : class, IPlugin, new()
         {
-            StageGuard.Check();
+            Guard.StageAllowed(Stage.Conf);
             string name = typeof(T).Name;
-            if (list.Contains(name))
+            if (_list.Contains(name))
                 throw new ArgumentException($"Plugin {name} already added.");
-            list.Add(name);
-            (new T()).Build(app);
+            _list.Add(name);
+            (new T()).Build(_app);
         }
     }
 
@@ -303,12 +279,15 @@ namespace RayECS
     {
         public static Stage Stage { get; private set; } = Stage.Conf;
 
-        public static int New(Action<App> fn)
+        public static int Run(Action<App> fn)
         {
+            Guard.NamedMethod(fn);
             if (Stage != Stage.Conf)
                 throw new InvalidOperationException("App.New() can only be called once.");
 
-            fn(new App());
+            var app = new App();
+            fn(app);
+            app.Boot();
 
             return 0;
         }
@@ -331,12 +310,9 @@ namespace RayECS
             App.Stage = Stage.Core;
         }
 
-        public void Run(string? firstState = null)
+        private void Boot()
         {
             Stage = Stage.Boot;
-
-            if (firstState is not null)
-                states.Set(firstState);
 
             // Init window.
             Raylib.SetConfigFlags(ConfigFlags.VSyncHint); // pacing par l’écran
@@ -348,20 +324,15 @@ namespace RayECS
 
             // TODO : run stage systems
 
-            Time time = new();
-            resources.Add(time, Lifetime.Permanent);
-
             App.Stage = Stage.Core;
 
-            // Config for fixed update
-            float fixedDt = 1f / 30f;
+            Time time = new() { TickDelta = 1f / 30f, FlowDelta = 0f, Alpha = 0f };
+            resources.Add(time, Lifetime.Permanent);
 
             // Time / resource
             const float MaxFrameTime = 0.25f;
             const int MaxFixedSteps = 8;
 
-            float dt;
-            float alpha;
             float acc = 0f;
             double elapsed = 0.0;
             double last = Raylib.GetTime();
@@ -370,24 +341,24 @@ namespace RayECS
             while (!WindowShouldClose())
             {
                 now = Raylib.GetTime();
-                dt = MathF.Min((float)(now - last), MaxFrameTime);
-                acc = MathF.Min(acc + dt, MaxFrameTime);
+                time.FlowDelta = MathF.Min((float)(now - last), MaxFrameTime);
+                acc = MathF.Min(acc + time.FlowDelta, MaxFrameTime);
                 last = now;
-                elapsed += dt;
-                alpha = acc / fixedDt;
+                elapsed += time.FlowDelta;
+                time.Alpha = acc / time.TickDelta;
 
-                //systemManager.RunUpdate(dt);
+                //systemManager.RunUpdate();
 
                 // 2) FIXED UPDATE (0..N) — logique/physique déterministe
                 int steps = 0;
-                while (acc >= fixedDt && steps < MaxFixedSteps)
+                while (acc >= time.TickDelta && steps < MaxFixedSteps)
                 {
-                    //systemManager.RunFixedUpdate(fixedDt);
-                    acc -= fixedDt;
+                    //systemManager.RunFixedUpdate();
+                    acc -= time.TickDelta;
                     steps++;
                 }
-                if (steps == MaxFixedSteps && acc >= fixedDt) {
-                    acc = MathF.Min(acc, fixedDt - 1e-6f);
+                if (steps == MaxFixedSteps && acc >= time.TickDelta) {
+                    acc = MathF.Min(acc, time.TickDelta - 1e-6f);
                 }
 
                 // 3) RENDER (1x par frame) — interpolation possible avec alpha
@@ -395,7 +366,7 @@ namespace RayECS
 
                 Raylib.BeginDrawing();
                 Raylib.ClearBackground(Color.Black);
-                //systemManager.RunDraw(alpha);
+                //systemManager.RunDraw();
                 Raylib.EndDrawing();
             }
             // Cleanup
