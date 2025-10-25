@@ -7,18 +7,28 @@ namespace RayECS
 {
     #region Core
 
-    public enum Stage { Conf, Boot, Core, Tick, Flow, Draw, Exit }
+    [Flags]
+    public enum Stage
+    {
+        None = 0,
+        Conf = 1 << 0,
+        Boot = 1 << 1,
+        Core = 1 << 2,
+        Tick = 1 << 3,
+        Flow = 1 << 4,
+        Draw = 1 << 5,
+        Exit = 1 << 6,
+    }
 
     public static class Guard
     {
         [Conditional("DEBUG")]
-        public static void StageAllowed(params Stage[] allowed)
+        public static void StageAllowed(Stage allowed)
         {
-            foreach (var stage in allowed)
-                if (App.Stage == stage) return;
-            throw new InvalidOperationException(
-                $"Stage {App.Stage} not allowed. Expected: {string.Join(", ", allowed)}"
-            );
+            if ((allowed & App.Stage) == 0)
+                throw new InvalidOperationException(
+                    $"Stage {App.Stage} not allowed. Expected: {string.Join(", ", allowed)}"
+                );
         }
 
         [Conditional("DEBUG")]
@@ -81,7 +91,7 @@ namespace RayECS
 
         public void Set(string name)
         {
-            Guard.StageAllowed(Stage.Boot, Stage.Flow);
+            Guard.StageAllowed(Stage.Boot | Stage.Flow);
             if (!_list.Contains(name))
                 throw new KeyNotFoundException($"State {name} not found.");
             if (name == _current)
@@ -103,7 +113,7 @@ namespace RayECS
 
         public bool In(string name)
         {
-            Guard.StageAllowed(Stage.Tick, Stage.Flow, Stage.Draw);
+            Guard.StageAllowed(Stage.Tick | Stage.Flow | Stage.Draw);
             if (!_list.Contains(name))
                 throw new KeyNotFoundException($"State {name} not found.");
             return name == _current;
@@ -125,7 +135,7 @@ namespace RayECS
 
         public void Add<T>(T res, Lifetime lifetime) where T : class, IResource
         {
-            Guard.StageAllowed(Stage.Core, Stage.Tick, Stage.Flow);
+            Guard.StageAllowed(Stage.Core | Stage.Tick | Stage.Flow);
             var t = typeof(T);
             if (_list.ContainsKey(t))
                 throw new InvalidOperationException($"Resource {t.Name} already exists.");
@@ -136,7 +146,7 @@ namespace RayECS
 
         public bool TryGet<T>(out T res) where T : class, IResource
         {
-            Guard.StageAllowed(Stage.Tick, Stage.Flow, Stage.Draw);
+            Guard.StageAllowed(Stage.Tick | Stage.Flow | Stage.Draw);
             if (_list.TryGetValue(typeof(T), out var entry))
             {
                 res = (T)entry.res;
@@ -148,7 +158,7 @@ namespace RayECS
 
         public bool Remove<T>() where T : class, IResource
         {
-            Guard.StageAllowed(Stage.Tick, Stage.Flow);
+            Guard.StageAllowed(Stage.Tick | Stage.Flow);
             var t = typeof(T);
             if (!_list.TryGetValue(t, out var entry))
                 throw new KeyNotFoundException($"Resource {t.Name} does not exist.");
@@ -214,7 +224,7 @@ namespace RayECS
             }
 
             get {
-                Guard.StageAllowed(Stage.Core, Stage.Tick);
+                Guard.StageAllowed(Stage.Core | Stage.Tick);
                 return _tickDelta;
             }
         }
@@ -227,7 +237,7 @@ namespace RayECS
             }
 
             get {
-                Guard.StageAllowed(Stage.Core, Stage.Flow);
+                Guard.StageAllowed(Stage.Core | Stage.Flow);
                 return _flowDelta;
             }
         }
