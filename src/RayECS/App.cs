@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Security.Cryptography;
 
 using Raylib_cs;
 using static Raylib_cs.Raylib;
@@ -42,6 +44,137 @@ namespace RayECS
                 throw new InvalidOperationException(
                     "Expected user-named method, but received lambda, closure or local function."
                 );
+        }
+    }
+
+    #endregion
+    
+    #region EntityManager
+
+    public sealed class EntityManager(App app)
+    {
+        private readonly App app = app;
+        private int sessionId = GenerateU16();
+        private int counter = 0;
+
+        public ushort SessionId => unchecked((ushort)Volatile.Read(ref sessionId));
+        public uint Counter => unchecked((uint)Volatile.Read(ref counter));
+        
+        private static ushort GenerateU16()
+            => (ushort)RandomNumberGenerator.GetInt32(0, 1 << 16);
+
+        public EntityId Spawn()
+        {
+            // Incrément atomique : évite les collisions entre threads.
+            uint index = unchecked((uint)Interlocked.Increment(ref counter));
+            // Lorsque l'index wrappe et redevient 0, on démarre une nouvelle "session".
+            // Une seule thread verra index==0, donc un seul write ici.
+            if (index == 0u) 
+                Volatile.Write(ref sessionId, GenerateU16());
+            // Lire le SessionId courant après éventuelle mise à jour.
+            ushort session = SessionId;
+            // Tirer un token et vérifier l'unicité côté ComponentManager.
+            // La proba de boucle est extrêmement faible, mais on boucle tant que nécessaire.
+            EntityId id;
+            do
+            {
+                ushort token = GenerateU16();
+                id = EntityId.FromParts(session, token, index);
+            } while (false);
+            // TODO : while (app.componentManager.Exists(id));
+            return id;
+        }
+
+        public override string ToString()
+            => $"EntityManager(Session={SessionId:X4}, Counter={Counter})";
+    }
+
+    #endregion
+
+    #region EntityId
+
+    public readonly struct EntityId(ulong value) :
+        IEquatable<EntityId>, IComparable<EntityId>, ISpanFormattable
+    {
+        public ulong Value { get; } = value;
+        public ushort SessionId => (ushort)(Value >> 48);
+        public ushort Token     => (ushort)((Value >> 32) & 0xFFFF);
+        public uint   Index     => (uint)(Value & 0xFFFF_FFFF);
+
+        public bool Equals(EntityId other) => Value == other.Value;
+        public override bool Equals(object? obj) => obj is EntityId other && Equals(other);
+        public override int GetHashCode() => Value.GetHashCode();
+        public int CompareTo(EntityId other) => Value.CompareTo(other.Value);
+        public static bool operator ==(EntityId a, EntityId b) => a.Value == b.Value;
+        public static bool operator !=(EntityId a, EntityId b) => a.Value != b.Value;
+
+        static readonly char[] Hex = "0123456789ABCDEF".ToCharArray();
+        static void WriteHexN(Span<char> dst, uint v, int n)
+        {
+            for (int i = n - 1; i >= 0; i--)
+            {
+                dst[i] = Hex[(int)(v & 0xF)];
+                v >>= 4;
+            }
+        }
+        static void WriteHex16(Span<char> dst, ushort v) => WriteHexN(dst, v, 4);
+        static void WriteHex32(Span<char> dst, uint v)  => WriteHexN(dst, v, 8);
+
+        public static EntityId FromParts(ushort sessionId, ushort token, uint index)
+        {
+            ulong value = ((ulong)sessionId << 48) | ((ulong)token << 32) | index;
+            return new EntityId(value);
+        }
+
+
+        public override string ToString()
+            => string.Create(17, this, static (dst, id) =>
+            {
+                WriteHex16(dst[..4],  id.SessionId);
+                dst[4]  = '-';
+                WriteHex16(dst.Slice(5, 4), id.Token);
+                dst[9]  = '-';
+                WriteHex32(dst.Slice(10, 8), id.Index);
+            });
+
+
+        public string ToString(string? format, IFormatProvider? provider) => ToString();
+
+
+        public bool TryFormat(Span<char> destination, out int charsWritten,
+            ReadOnlySpan<char> format = default, IFormatProvider? provider = null)
+        {
+            _ = format; _ = provider;
+            if (destination.Length < 17) { charsWritten = 0; return false; }
+            WriteHex16(destination[..4],  SessionId);
+            destination[4] = '-';
+            WriteHex16(destination.Slice(5, 4), Token);
+            destination[9] = '-';
+            WriteHex32(destination.Slice(10, 8), Index);
+            charsWritten = 17;
+            return true;
+        }
+        
+        public static bool TryParse(string s, out EntityId id)
+        {
+            id = default;
+            if (string.IsNullOrWhiteSpace(s)) return false;
+
+            ReadOnlySpan<char> span = s.AsSpan().Trim();
+            if (span.Length != 17 || span[4] != '-' || span[9] != '-') return false;
+            var p1 = span[..4];
+            var p2 = span.Slice(5, 4);
+            var p3 = span.Slice(10, 8);
+
+            if (!ushort.TryParse(p1, NumberStyles.AllowHexSpecifier,
+                CultureInfo.InvariantCulture, out var session)) return false;
+            if (!ushort.TryParse(p2, NumberStyles.AllowHexSpecifier,
+                CultureInfo.InvariantCulture, out var token)) return false;
+            if (!uint.TryParse  (p3, NumberStyles.AllowHexSpecifier,
+                CultureInfo.InvariantCulture, out var index)) return false;
+
+            id = FromParts(session, token, index);
+            return true;
         }
     }
 
@@ -302,12 +435,14 @@ namespace RayECS
             return 0;
         }
 
+        public readonly EntityManager entities;
         public readonly Plugins plugins;
         public readonly Resources resources;
         public readonly States states;
 
         private App()
         {
+            entities = new(this);
             plugins = new(this);
             resources = new(this);
             states = new(this);
